@@ -1,0 +1,171 @@
+
+##Accepting everything we need....
+
+iptables -t raw -A PREROUTING -p tcp -s 167.114.37.1 -j ACCEPT
+iptables -t mangle -A PREROUTING -p tcp -s 167.114.37.1 -j ACCEPT
+
+iptables -t raw -A PREROUTING -p tcp -s 139.99.1.148 -j ACCEPT
+iptables -t mangle -A PREROUTING -p tcp -s 139.99.1.148 -j ACCEPT
+
+iptables -t raw -A PREROUTING -p tcp -s 92.222.184.1 -j ACCEPT
+iptables -t mangle -A PREROUTING -p tcp -s 92.222.184.1 -j ACCEPT
+
+
+##Replace this with your server IP so you can connect to SSH while being on it
+
+iptables -t raw -A PREROUTING -p tcp -s 5.196.239.182 -j ACCEPT
+iptables -t mangle -A PREROUTING -p tcp -s 5.196.239.182 -j ACCEPT
+
+
+##Accpeting ESTABLISHED,RELATED connections and SSH
+
+sudo iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport ssh -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+sudo iptables -t mangle -A INPUT -p tcp --dport 1194 -j ACCEPT
+sudo iptables -t mangle -A INPUT -p tcp --dport 1194 -m connlimit --connlimit-above 2 -j ACCEPT
+iptables -t mangle -A PREROUTING -i lo -j ACCEPT
+iptables -t mangle -A PREROUTING -i tun+ -j ACCEPT
+iptables -t mangle -A PREROUTING -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+iptables -t mangle -A PREROUTING -p tcp -m length --length 52:300 --dport 1194 -m limit --limit 10/second -j ACCEPT
+iptables -t mangle -A INPUT -p tcp -m length --length 52:300 --dport 1194 -m limit --limit 10/second -j ACCEPT
+
+##Dropping INVALID packets
+
+iptables -t mangle -A PREROUTING -m conntrack --ctstate INVALID -j DROP
+iptables -t mangle -A INPUT -m conntrack --ctstate INVALID -j DROP
+
+
+
+##Basically tries to slow down killall on single IP setups (it will still die but not as fast)
+
+iptables -A INPUT -p tcp --dport 80 -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+
+##Limiting new SYN connections on config port
+
+iptables -t mangle -A PREROUTING -p tcp -m conntrack --ctstate NEW --syn --dport 1194 -m connlimit --connlimit-above 4 -j DROP
+
+
+##Limiting all tcp flags on any port
+
+iptables -t mangle -A PREROUTING -p tcp -m tcp --tcp-flags RST,URG,PSH,FIN,SYN,ACK SYN -m multiport --sports 1:65535 -m connlimit --connlimit-above 3 --connlimit-mask 16 -j DROP
+iptables -t mangle -A INPUT -p tcp -m tcp --tcp-flags RST,URG,PSH,FIN,SYN,ACK SYN -m multiport --sports 1:65535 -m connlimit --connlimit-above 3 --connlimit-mask 16 -j DROP
+iptables -t raw -A PREROUTING -p tcp -m tcp --tcp-flags RST,URG,PSH,FIN,SYN,ACK SYN -m multiport --dports 1194 -m connlimit --connlimit-above 3 --connlimit-mask 8 -j DROP
+
+##Hashlimiting TCP flags on config port
+
+iptables -t mangle -A PREROUTING -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 1194 -m conntrack --ctstate NEW -m hashlimit --hashlimit-upto 2min --hashlimit-burst 2 --hashlimit-mode srcip --hashlimit-name portlimit --hashlimit-htable-expire 120000 --hashlimit-srcmask 24 -j ACCEPT
+iptables -t mangle -A INPUT -p tcp -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m multiport --dports 1194 -m conntrack --ctstate NEW -m hashlimit --hashlimit-upto 2min --hashlimit-burst 2 --hashlimit-mode srcip --hashlimit-name portlimit --hashlimit-htable-expire 120000 --hashlimit-srcmask 24 -j ACCEPT
+
+
+
+## Connlimit SYN and ACK on port 1194, you can change the connlimit to 1 but I prefer 2 even if more connections are accepted then
+
+iptables -t mangle -A PREROUTING -p tcp -m multiport --dports 1194 -m tcp --tcp-flags FIN,SYN,RST,ACK SYN -m connlimit --connlimit-above 2 --connlimit-mask 16 --connlimit-saddr -j DROP
+
+
+## Change YOUR IP to YOUR home ip (whitelisting SSH)
+
+iptables -I INPUT -p tcp --dport 22 -s YOUR IP.0/24 -j ACCEPT
+iptables -t mangle -A INPUT -p tcp --dport 22 -s YOUR IP.0/24 -j ACCEPT
+iptables -t mangle -A PREROUTING -p tcp --dport 22 -s YOUR IP.0/24 -j ACCEPT
+iptables -I INPUT -p tcp --dport 1194 -j ACCEPT
+iptables -t raw -A PREROUTING -p tcp -s YOUR IP.0/24 --dport 22 -j ACCEPT
+sudo iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport ssh -j ACCEPT
+iptables -t mangle -A PREROUTING -i lo -j ACCEPT
+iptables -t mangle -A PREROUTING -i tun+ -j ACCEPT
+
+## Dropping useless TCP flags to config port and all srcports 
+
+iptables -t mangle -A PREROUTING -p tcp -m tcp --tcp-flags RST,URG,PSH,FIN PSH -m multiport --sports 1:65535 -m connlimit --connlimit-above 2 -j DROP
+iptables -t mangle -A INPUT -p tcp -m tcp --tcp-flags RST,URG,PSH,FIN PSH -m multiport --sports 1:65535 -m connlimit --connlimit-above 2 -j DROP
+iptables -t mangle -A PREROUTING -p tcp -m tcp --tcp-flags RST,URG,PSH,FIN PSH -m multiport --dports 1194 -m connlimit --connlimit-above 2 -j DROP
+ 
+
+## Limiting RST and ACK down to nothing
+iptables -t mangle -A PREROUTING -p tcp -m multiport --dports 1194 -m tcp --tcp-flags RST ACK -m connlimit --connlimit-above 1 --connlimit-mask 32 --connlimit-saddr -j DROP
+
+## Dropping botnet lengths 
+iptables -A INPUT -p tcp -m tcp --tcp-flags RST ACK -m length ! --length 973 -j DROP
+iptables -t mangle -A INPUT -p tcp -m tcp --tcp-flags RST ACK -m length ! --length 919 -j DROP
+
+
+
+## Ratelimiting SSH port + 1194 (you can change hitcount and reset time if you know what you are doing
+
+
+iptables -A INPUT -p tcp --dport 22 -m state --state NEW -m recent --update --seconds 120 --hitcount 3 -j DROP
+iptables -A INPUT -p tcp --dport 22 -m state --state NEW -m recent --set
+iptables -A INPUT -p tcp --dport 22 -m state --state NEW -j ACCEPT
+
+
+iptables -A INPUT -p tcp --dport 1194 -m state --state NEW -m recent --update --seconds 10 --hitcount 5 -j DROP
+iptables -A INPUT -p tcp --dport 1194 -m state --state NEW -m recent --set
+iptables -A INPUT -p tcp --dport 1194 -m state --state NEW -j ACCEPT
+
+
+
+##Dropping useless and sus Hex
+
+iptables -t mangle -A PREROUTING -p tcp --dport 1:65535 -m string --string 'RX' --algo bm -j DROP
+iptables -t mangle -A PREROUTING -p udp --sport 7001 -m string --string 'RX' --algo bm -j DROP
+iptables -t mangle -A PREROUTING -p tcp --dport 1:65535 -m string --string 'SSL' --algo bm -j DROP
+iptables -t mangle -A PREROUTING -p tcp --dport 1:65535 -m string --string 'User-Agent:' --algo bm -j DROP
+iptables -t mangle -A PREROUTING -p tcp --dport 1:65535 -m string --string "\x39\x08\xa6\x47\x00\x00\x02\x04\x05\xb4\x04\x02\x08\x0a\x00\x08" --algo bm -j DROP
+
+
+##Scrolls custom CWR - ECN flags filters which can surpass SSH whitelist (ECN aka ECE and CWR are flags which are not known by linux as such {-m tcp --tcp-flags ECN,CWR ECN will not work!!!} and raise CPU by forcing it to do more processes)
+
+iptables -t mangle -A PREROUTING -p tcp ! --tcp-flags SYN SYN -m ecn --ecn-tcp-cwr -m connlimit --connlimit-above 1 --connlimit-mask 8 -j DROP
+iptables -t mangle -A INPUT -p tcp ! --tcp-flags SYN SYN -m ecn --ecn-tcp-cwr -m multiport --dports 22 -j DROP
+iptables -t mangle -A INPUT -p tcp ! --tcp-flags SYN SYN -m ecn --ecn-tcp-cwr -m multiport --dports 1194 -j DROP
+
+##Tables above should completely stop them espacially for whitelisted SSH and a VPN port, if they DONT and you got issues with CWR flags then, but ONLY then do this:
+
+iptables -t mangle -A PREROUTING -p tcp ! --tcp-flags SYN SYN -m ecn --ecn-tcp-cwr -m multiport --sports 1:65535 -j DROP
+iptables -t mangle -A PREROUTING -p tcp -s 0/0 -d YOUR SERVER IP HERE --sport 1:65535 --dport 22 -m tcp ! --tcp-flags SYN SYN -m ecn --ecn-tcp-cwr -j DROP
+iptables -t mangle -A PREROUTING -p tcp -s 0/0 -d YOUR SERVER IP HERE --sport 1:65535 --dport 1194 -m tcp ! --tcp-flags SYN SYN -m ecn --ecn-tcp-cwr -j DROP
+iptables -t mangle -A PREROUTING -p tcp -s 0/0 -d YOUR SERVER IP HERE --sport 1:65535 -m state --state ESTABLISHED -m tcp ! --tcp-flags SYN SYN -m ecn --ecn-tcp-cwr -j DROP
+
+
+##ONCE AGAIN: DO NOT DO THIS IF YOU DO NOT HAVE ANY PROBLEMS WITH SOCKET FLOODS WHICH INCLUDE THE CWR,ECN FLAG!!!!!!!!!!!!!!!
+
+
+
+##Dropping all other uneeded input (if you did everything alright, you should not get kicked of your SSH)
+
+iptables -t mangle -P INPUT DROP
+iptables -t mangle -P PREROUTING DROP
+iptables -A INPUT -j DROP 
+
+##Kernel, paste in terminal
+
+echo "net.ipv4.tcp_keepalive_probes = 5" >> /etc/sysctl.conf
+echo "net.ipv4.tcp_ecn = 0" >> /etc/sysctl.conf
+echo "net.ipv4.icmp_echo_ignore_all = 1" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_tcp_max_retrans = 10" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_tcp_timeout_unacknowledged = 5" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_tcp_timeout_max_retrans = 1" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_tcp_timeout_established = 30" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_tcp_timeout_syn_sent = 5" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_tcp_timeout_close = 5" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_tcp_timeout_close_wait = 5" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_tcp_timeout_last_ack = 5" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_tcp_timeout_time_wait = 1" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_max = 10000000" >> /etc/sysctl.conf
+echo "net.netfilter.nf_conntrack_tcp_timeout_syn_recv = 4" >> /etc/sysctl.conf
+
+
+##Save and refresh everything...
+
+
+sysctl -p
+sysctl -p /etc/sysctl.conf
+iptables-save
+
+
+iptables-save > /root/dsl.fw
+iptables-restore < /root/dsl.fw
